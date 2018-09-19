@@ -1,4 +1,4 @@
-# Wikipedia Web traffic forecasting
+# Wikipedia Web Traffic Forecasting
 _Overview:_ 
 + The training dataset consists of approximately 145k time series. 
 Each of these time series represent a number of daily views of a different Wikipedia article, starting from July, 1st, 2015 up until December 31st, 2016.
