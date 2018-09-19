@@ -1,0 +1,219 @@
+---
+title: "Wikipedia Web traffic EDA"
+output:
+    html_document:
+        theme: cosmo
+        highlight: tango
+        code_folding: show
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+This is my Exploratory Data Analysis on the [kaggle competition](https://www.kaggle.com/c/web-traffic-time-series-forecasting). 
+
+I know that this project has been on Kaggle for a while and has been analyzed for many. But my approach on data deep dive, cleaning and visualization will hopefully bring some uncovered perspectives regarding this project.
+
+This notebook will cover insights on wikipedia traffic through summary tables, word cloud, time series plot and heatmaps on the training data provided. 
+We won't be using  *key_\*.csv* files for this analysis.
+
+### Set up environment
+
+```{r dependencies, message = FALSE, warning = FALSE}
+library(data.table); library(dplyr); library(tidyr) # data manipulation
+library(ggplot2)
+library(stringr)
+pacman::p_load(wordcloud,corpus) # textmining
+```
+
+### First pass to clean data
+Let's first read in and take a look at the data composition and dimensions
+```{r}
+train_wiki = fread("../input/train_1.csv",encoding = 'UTF-8')
+head(train_wiki[,1:5])
+dim(train_wiki)
+```
+
+Due to computation power of my laptop, i will sample the train data to 1/50 of all wiki Pages for faster runtime, I will use all data and re-run this analysis at a later time
+```{r,message = FALSE, warning = FALSE}
+set.seed(1234)
+sample_wiki <- train_wiki %>% 
+  sample_frac(0.02) %>% 
+  gather(Date, Visit, -Page) %>% data.table
+```
+
+Let's do a count of missing values for all variables, and return percentages.
+```{r}
+    sapply(sample_wiki, function(x) data.table(sum(is.na(x))/nrow(train_wiki),
+                                              sum(is.na(x))))
+```
+
+In the kaggle dataset description, the _Page_ column is structured as *Name_Project_Access_Agent* separated by '_'. But by looking at the Pages column briefly, seems like the NAMEs are split by '_' sometimes too. Let's also check how many rows has exactly 3 '_' separators in Page out of the first 100,000 rows
+```{r}
+    sum(sapply(sample_wiki$Page[1:100000], function(x) str_count(x,pattern = "_")) == 3)
+```
+
+let's drop the missing values from _Visits_, since we are unsure if they should be treated as zero visits to a Page on a specific day or maybe something happend on the server end and failed to update numbers on that day.
+```{r}
+    sample_wiki <- sample_wiki[!is.na(Visit)]
+```
+
+### Extract, split, create new columns
+
+Based on the *Name_Project_Access_Agent* format of the _Page_ column, the most varied component is *Name*. But the last three components are always seperated by '_'. So with _Name_, I will split by '_' to separate out the other components, then collapse all the strings excluding the last three components. Vice versa to extract _Project_, _Access_ and _Agent_. 
+
+I then combine all the added columns together, and bind with the main dataset.
+```{r}
+    # extract name, project, access, agent from Page
+    name = lapply(str_split(sample_wiki$Page,pattern = "_"),
+                  function(x) head(x,length(x)-3))
+    name = lapply(name, function(x) paste(x,collapse = ' '))
+    
+    page_split <- lapply(str_split(sample_wiki$Page,pattern = "_"), 
+                         function(x) tail(x,3)) 
+    add <- data.table(Project= unlist(lapply(page_split, function(x) x[1])),
+                      Access= unlist(lapply(page_split, function(x) x[2])),
+                      Agent= unlist(lapply(page_split, function(x) x[3])),
+                      Name = unlist(name))
+    
+    sample_wiki <- cbind(sample_wiki, add)
+    head(sample_wiki)
+```
+
+Let's also format the Date column and extract Year and Month from it for later analysis at the aggregated level.
+```{r}
+sample_wiki <- sample_wiki %>% 
+  mutate(Date = as.Date(Date,format="%Y-%m-%d"),
+         Year = year(Date),
+         Month = month(Date))
+```
+
+### Visualization
+
+We will start by visualizing the total number of visits to all wikipedia sites per day regardless of Project, Agent or Access type. 
+```{r}
+# Visualize the sample data, by Date only
+p_base <- sample_wiki %>%
+  group_by(Date) %>%
+  summarise(Visit = sum(Visit)) %>%
+  ggplot(aes(Date, Visit)) + 
+  geom_line() + theme_bw()
+print(p_base)
+```
+
+```{r}
+# Visualize the sample data, by Project
+p_proj <- sample_wiki %>%
+  group_by(Date,Project) %>%
+  summarise(Visit = sum(Visit)) %>%
+  ggplot(aes(Date, Visit)) + 
+  geom_line(color = 'red') + 
+  facet_wrap(~Project,scales = 'free_y') + theme_bw()
+p_proj
+```
+
+```{r}
+# Visualize by Access
+p_access <- sample_wiki %>%
+    group_by(Date,Access) %>%
+    summarise(Visit = sum(Visit)) %>%
+    ggplot(aes(Date, Visit)) + 
+    geom_line(color = 'blue') + 
+          facet_wrap(~Access,nrow = 3) + theme_bw()
+p_access
+```
+
+```{r}
+p_agent <- sample_wiki %>%
+        group_by(Date,Agent) %>%
+        summarise(Visit = sum(Visit)) %>%
+        ggplot(aes(Date, Visit)) + 
+        geom_line(color = 'purple') + 
+        facet_wrap(~Agent, scales = 'free_y') + theme_bw()
+p_agent
+```
+
+
+```{r}
+# summarize by Project, pick the top 1 of all time
+top_1_proj <- sample_wiki %>%
+  group_by(Project, Page) %>%
+  summarise(Visit = sum(Visit)) %>%
+  top_n(1, Visit) %>% data.table
+top_1_proj
+```
+
+From the summary above, I see that *Special:Search* is the most visited page from the English wiki project, and have reached more than 1 billion in 500 days. This is worth noticing and could be a potential outlier.
+```{r}
+ # summarize by project and year, top 1
+top_1_proj_yr <- sample_wiki %>%
+  group_by(Project, Year, Page) %>%
+  summarise(Visit = sum(Visit)) %>%
+  top_n(1, Visit) %>%
+  spread(Year,Visit) %>% data.table
+top_1_proj_yr
+```
+
+I thought it will be cool to put together a word cloud by taking a look at the top visited English Wikipedia pages. I pick English because I will have a better intuition on that. I am also a native mandarin speaker, so analyzing Chinese pages could be a next step.
+
+Here I want to drop the _Speicial:Search_ from pages because it's ranked the top in 2015 and 2016 and is not meaningful to us. Besides, knowing _Speicial:Search_ has the most hits is way less exciting as, say, the new star war movie.
+```{r}
+wc <- sample_wiki %>% 
+  group_by(Project, Year, Name) %>%
+  summarise(Visit = sum(Visit)) %>% data.table
+
+wc_en <- wc[grepl('en',Project) & Name != 'Special:Search']
+wc_en_15 <- wc_en[Year == 2015]
+wc_en_16 <- wc_en[Year == 2016]
+```
+
+Here is a word cloud based on the sampled wikipedia data. Here i picked top 20% most frequently visited pages.
+
+For 2015:
+```{r, fig.width = 8, fig.height = 8}
+set.seed(1234)
+wordcloud(words = wc_en_15$Name, freq = wc_en_15$Visit, min.freq = 1,
+          max.words=88, random.order=FALSE, rot.per=0.35,
+          colors=brewer.pal(8, "Dark2")
+          # random.color = F
+          )
+```
+
+For 2016:
+```{r, fig.width = 8, fig.height = 8}
+set.seed(1234)
+wordcloud(words = wc_en_16$Name, freq = wc_en_16$Visit, min.freq = 1,
+          max.words=95, random.order=FALSE, rot.per=0.35,
+          colors=brewer.pal(8, "Dark2")
+          # random.color = F
+          )
+```
+We will then take a closer look at the top visited pages in 2015 and 2016 to see how their popularity changes.
+We will also try to identify whether a page is consistently popular or maybe a special event happened during a period of time. 
+```{r, fig.width = 8, fig.height = 8, warning = F}
+top_10_en_15 <- top_n(wc_en_15, 10,Visit) %>% select(Name)
+# time trend by the top phrases
+    sample_wiki %>% 
+      filter(Name %in% top_10_en_15$Name,
+             Year == 2015) %>%
+      ggplot() + 
+      geom_line(aes(x= Date,y = Visit)) +
+      facet_wrap(~Name, scales = 'free_y',nrow = 5) +
+      theme_bw()
+ 
+```
+
+```{r, fig.width = 8, fig.height = 8, warning = F}
+top_10_en_16 <- top_n(wc_en_16, 10,Visit) %>% select(Name)
+# time trend by the top phrases
+    sample_wiki %>% 
+      filter(Name %in% top_10_en_16$Name,
+             Year == 2016) %>%
+      ggplot() + 
+      geom_line(aes(x= Date,y = Visit)) +
+      facet_wrap(~Name, scales = 'free_y',nrow = 5) +
+      theme_bw()
+```
+## Potentially add another section for heatmaps ...
+
