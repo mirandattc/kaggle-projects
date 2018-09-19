@@ -7,3 +7,6 @@ The project aims to forcast daily views between September 13th, 2017 and Novembe
 _Limitation on data:_
 + The data provided does not distinguish between traffic values of zero and missing values. 
 A missing value may mean the traffic was zero or that the data is not available for that day.
+
+_Limitation on R notebook:_
++ It seems to be a known issue that Github doesn't work well with html syle output. More interactive version of this project can also be found on my kaggle profile: https://www.kaggle.com/mtao94/wikipedia-web-traffic-eda
