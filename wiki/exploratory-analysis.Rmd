@@ -215,5 +215,5 @@ top_10_en_16 <- top_n(wc_en_16, 10,Visit) %>% select(Name)
       facet_wrap(~Name, scales = 'free_y',nrow = 5) +
       theme_bw()
 ```
-## Potentially add another section for heatmaps ...
+### Potentially add another section for heatmaps ...
 
